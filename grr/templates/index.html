@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block content %}
+{% if study is none %}
+<h2>登记试验</h2>
+<p>登记 {{ min_i }}～{{ max_i }} 名检验员与 {{ min_p }}～{{ max_p }} 件样件；随后每人对每件测量两次（毫米）。</p>
+<form method="post" action="{{ url_for('create_study') }}" class="card">
+  <p>试验名称 <input name="name" placeholder="量具重复性与再现性试验"></p>
+  <fieldset>
+    <legend>检验员（{{ min_i }}～{{ max_i }} 名）</legend>
+    {% for _ in range(max_i) %}<input name="inspector" placeholder="检验员 {{ loop.index }}"><br>{% endfor %}
+  </fieldset>
+  <fieldset>
+    <legend>样件编号（{{ min_p }}～{{ max_p }} 件，按位置排列）</legend>
+    {% for _ in range(max_p) %}<input name="part" placeholder="位置 {{ loop.index }} 编号"><br>{% endfor %}
+  </fieldset>
+  <button type="submit">登记试验</button>
+</form>
+{% else %}
+<h2>{{ study.name }}</h2>
+<p>检验员：{% for i in inspectors %}<strong>{{ i.name }}</strong>{{ "、" if not loop.last }}{% endfor %}
+   ｜ 现行样件 {{ parts|length }} 件 ｜ 每人每件测 {{ trials|length }} 次</p>
+
+<h3>读数录入（毫米）</h3>
+<form method="post" action="{{ url_for('submit_readings') }}">
+<table>
+  <tr>
+    <th>位置</th><th>样件编号</th>
+    {% for i in inspectors %}<th colspan="{{ trials|length }}">{{ i.name }}</th>{% endfor %}
+  </tr>
+  <tr>
+    <th></th><th></th>
+    {% for i in inspectors %}{% for t in trials %}<th>测次{{ t }}</th>{% endfor %}{% endfor %}
+  </tr>
+  {% for p in parts %}
+  <tr>
+    <td>{{ p.position }}</td>
+    <td>{{ p.part_no }}</td>
+    {% for i in inspectors %}
+      {% for t in trials %}
+        {% set v = rmap.get((p.id, i.id, t)) %}
+        <td><input size="8" inputmode="decimal"
+                   name="r_{{ p.id }}_{{ i.id }}_{{ t }}"
+                   value="{{ '%g'|format(v) if v is not none else '' }}"></td>
+      {% endfor %}
+    {% endfor %}
+  </tr>
+  {% endfor %}
+</table>
+<button type="submit">提交读数</button>
+<span class="hint">同一测次原值重报只记一次；异值退回；已更换样件的迟到读数拒收。</span>
+</form>
+
+{% if missing %}
+<h3>待补项（{{ missing|length }} 项）</h3>
+<ul class="missing">
+  {% for m in missing %}
+  <li>位置 {{ m.position }}（{{ m.part_no }}） · {{ m.inspector }} · 第 {{ m.trial }} 测次</li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="ok">读数已齐全。<a href="{{ url_for('report') }}">查看现行报告</a></p>
+{% endif %}
+
+<h3>样件更换（磕伤时在原位置换入新编号，只需重测新件）</h3>
+<form method="post" action="{{ url_for('replace_part') }}" class="card">
+  位置
+  <select name="position">
+    {% for p in parts %}<option value="{{ p.position }}">{{ p.position }}（现行：{{ p.part_no }}）</option>{% endfor %}
+  </select>
+  新编号 <input name="part_no" required>
+  <button type="submit">换入新件</button>
+</form>
+
+{% if replaced %}
+<h3>已更换下线的样件（读数保留备查）</h3>
+{% for item in replaced %}
+<details>
+  <summary>位置 {{ item.part.position }} · 旧编号 {{ item.part.part_no }}（{{ item.part.replaced_at }} 下线）</summary>
+  <table>
+    <tr><th>检验员</th><th>测次</th><th>读数</th></tr>
+    {% for r in item.readings %}
+    <tr><td>{{ r.inspector }}</td><td>{{ r.trial }}</td><td>{{ '%g'|format(r.value) }}</td></tr>
+    {% endfor %}
+  </table>
+</details>
+{% endfor %}
+{% endif %}
+
+<p>
+  {% if current %}现行报告 #{{ current.id }}（{{ current.created_at }}）：{% endif %}
+  <a href="{{ url_for('report') }}">现行报告</a> · <a href="{{ url_for('history') }}">历史报告</a>
+</p>
+{% endif %}
+{% endblock %}

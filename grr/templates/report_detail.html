@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}报告 #{{ report.id }}{% endblock %}
+{% block content %}
+<h2>报告 #{{ report.id }}
+  {% if report.state == 'current' %}<span class="badge current">现行</span>
+  {% else %}<span class="badge history">历史</span>{% endif %}
+</h2>
+{% include "_report_body.html" %}
+<p><a href="{{ url_for('history') }}">返回历史报告列表</a></p>
+{% endblock %}

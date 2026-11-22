@@ -1,0 +1,16 @@
+services:
+  web:
+    build: .
+    image: grr-demo
+    ports:
+      - "8000:8000"
+    environment:
+      DEMO_SEED: "1"          # 首次启动载入演示试验（读数齐全、报告已生成）
+      DATABASE: /data/grr.db
+      PORT: "8000"
+    volumes:
+      - grr-data:/data
+    restart: unless-stopped
+
+volumes:
+  grr-data:

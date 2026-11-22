@@ -1,0 +1,36 @@
+{# 报告正文：方差分析表 + 方差分量 + 所用读数；供现行报告与历史详情共用 #}
+<h3>带交互项的双因素方差分析</h3>
+<p>{{ report.n_parts }} 件样件 × {{ report.n_inspectors }} 名检验员 × {{ report.n_trials }} 次重复 ｜
+   生成于 {{ report.created_at }}</p>
+<table>
+  <tr><th>变差来源</th><th>平方和 SS</th><th>自由度 df</th><th>均方 MS</th></tr>
+  <tr><td>样件</td><td>{{ '%.6f'|format(report.ss_part) }}</td><td>{{ report.n_parts - 1 }}</td><td>{{ '%.6f'|format(report.ms_part) }}</td></tr>
+  <tr><td>检验员</td><td>{{ '%.6f'|format(report.ss_inspector) }}</td><td>{{ report.n_inspectors - 1 }}</td><td>{{ '%.6f'|format(report.ms_inspector) }}</td></tr>
+  <tr><td>样件×检验员交互</td><td>{{ '%.6f'|format(report.ss_interaction) }}</td><td>{{ (report.n_parts - 1) * (report.n_inspectors - 1) }}</td><td>{{ '%.6f'|format(report.ms_interaction) }}</td></tr>
+  <tr><td>重复测量（误差）</td><td>{{ '%.6f'|format(report.ss_error) }}</td><td>{{ report.n_parts * report.n_inspectors * (report.n_trials - 1) }}</td><td>{{ '%.6f'|format(report.ms_error) }}</td></tr>
+  <tr><td>合计</td><td>{{ '%.6f'|format(report.ss_total) }}</td><td>{{ report.n_parts * report.n_inspectors * report.n_trials - 1 }}</td><td>—</td></tr>
+</table>
+
+<h3>方差分量（负分量按零计）</h3>
+<table>
+  <tr><th>分量</th><th>方差分量</th><th>标准差</th><th>占比</th></tr>
+  {% for c in components %}
+  <tr>
+    <td>{{ c.name }}</td>
+    <td>{{ '%.6f'|format(c.var) }}</td>
+    <td>{{ '%.6f'|format(c.std) }}</td>
+    <td>{{ '%.2f'|format(c.pct) }}%</td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h3>本报告所用读数（毫米）</h3>
+<table>
+  <tr><th>位置</th><th>样件编号</th><th>检验员</th><th>测次</th><th>读数</th></tr>
+  {% for r in readings %}
+  <tr{% if r.status == 'replaced' %} class="replaced"{% endif %}>
+    <td>{{ r.position }}</td><td>{{ r.part_no }}</td>
+    <td>{{ r.inspector }}</td><td>{{ r.trial }}</td><td>{{ '%g'|format(r.value) }}</td>
+  </tr>
+  {% endfor %}
+</table>

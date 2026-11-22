@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}量具 R&R 分析{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header>
+  <h1>机加工车间 · 量具重复性与再现性分析</h1>
+  <nav>
+    <a href="{{ url_for('index') }}">试验台</a>
+    <a href="{{ url_for('report') }}">现行报告</a>
+    <a href="{{ url_for('history') }}">历史报告</a>
+  </nav>
+</header>
+{% with msgs = get_flashed_messages(with_categories=true) %}
+  {% if msgs %}
+    {% for cat, m in msgs %}<div class="flash {{ cat }}">{{ m }}</div>{% endfor %}
+  {% endif %}
+{% endwith %}
+<main>
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>

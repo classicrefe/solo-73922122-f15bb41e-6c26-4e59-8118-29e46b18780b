@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}历史报告{% endblock %}
+{% block content %}
+<h2>报告列表 — {{ study.name }}</h2>
+{% if reports %}
+<table>
+  <tr><th>#</th><th>状态</th><th>生成时间</th><th>规模</th><th>重复测量分量</th><th>检验员分量</th><th>交互分量</th><th></th></tr>
+  {% for r in reports %}
+  <tr>
+    <td>{{ r.id }}</td>
+    <td>{% if r.state == 'current' %}<span class="badge current">现行</span>{% else %}<span class="badge history">历史</span>{% endif %}</td>
+    <td>{{ r.created_at }}</td>
+    <td>{{ r.n_parts }}件 × {{ r.n_inspectors }}人 × {{ r.n_trials }}次</td>
+    <td>{{ '%.6f'|format(r.var_repeatability) }}</td>
+    <td>{{ '%.6f'|format(r.var_inspector) }}</td>
+    <td>{{ '%.6f'|format(r.var_interaction) }}</td>
+    <td><a href="{{ url_for('report_detail', report_id=r.id) }}">查看</a></td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p>尚无报告。读数齐全后自动生成现行报告。</p>
+{% endif %}
+{% endblock %}
