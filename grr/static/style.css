@@ -10,6 +10,8 @@ th { background: #eef2f7; }
 input { padding: 3px 6px; }
 button { padding: 6px 18px; background: #1f3a5f; color: #fff; border: 0; border-radius: 3px; cursor: pointer; }
 button:hover { background: #2c5282; }
+a.button { display: inline-block; padding: 6px 14px; background: #1f3a5f; color: #fff; border-radius: 3px; text-decoration: none; }
+a.button:hover { background: #2c5282; }
 .flash { padding: 8px 14px; margin: 8px 24px 0; border-radius: 4px; }
 .flash.ok { background: #e6f6e6; border: 1px solid #7cc47c; }
 .flash.error { background: #fdeaea; border: 1px solid #e08a8a; }

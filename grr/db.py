@@ -68,6 +68,21 @@ CREATE TABLE IF NOT EXISTS report_part (
     part_id   INTEGER NOT NULL REFERENCES part(id),
     PRIMARY KEY (report_id, part_id)
 );
+
+-- 两地合算结果：基于本方一份报告与另一车间上传的统计摘要；
+-- 只存汇总量与结果，原报告保留不变
+CREATE TABLE IF NOT EXISTS combine (
+    id           INTEGER PRIMARY KEY,
+    report_id    INTEGER NOT NULL REFERENCES report(id),
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    peer_label   TEXT NOT NULL,        -- 对方摘要标识（试验名/报告号）
+    n_parts      INTEGER NOT NULL,     -- 参与合算的共用样件数
+    n_insp_local INTEGER NOT NULL,     -- 本方检验员数
+    n_insp_peer  INTEGER NOT NULL,     -- 对方检验员数（两地分别计数）
+    n_trials     INTEGER NOT NULL,
+    result_json  TEXT NOT NULL,        -- 合算方差分析结果（与两地明细合并计算一致）
+    parts_json   TEXT NOT NULL         -- 参与合算的样件 [{position, part_no}]
+);
 """
 
 

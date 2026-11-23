@@ -1,9 +1,10 @@
-"""Flask 路由：试验台、读数录入、换件、报告与历史。"""
+"""Flask 路由：试验台、读数录入、换件、报告与历史、两地合算。"""
+import json
 import os
 import sqlite3
 
 from flask import (
-    Flask, abort, flash, g, redirect, render_template, request, url_for,
+    Flask, Response, abort, flash, g, redirect, render_template, request, url_for,
 )
 
 from . import service
@@ -163,6 +164,79 @@ def create_app(config=None):
             parts=service.report_parts(db, rep["id"]),
             readings=service.report_readings(db, rep["id"]),
             components=_components(rep),
+            combines=service.list_combines(db, rep["id"]),
+            min_shared=service.MIN_SHARED_PARTS,
+        )
+
+    @app.route("/report/<int:report_id>/summary.json")
+    def report_summary(report_id):
+        """下载本报告的统计摘要（供另一车间合算用）。"""
+        db = get_db()
+        study = service.get_study(db)
+        rep = service.get_report(db, report_id)
+        if rep is None or study is None or rep["study_id"] != study["id"]:
+            abort(404)
+        payload = json.dumps(
+            service.build_summary(db, report_id), ensure_ascii=False, indent=2
+        )
+        return Response(
+            payload,
+            mimetype="application/json",
+            headers={
+                "Content-Disposition":
+                    f"attachment; filename=grr-summary-report-{report_id}.json"
+            },
+        )
+
+    @app.route("/report/<int:report_id>/combine", methods=["POST"])
+    def combine_report(report_id):
+        """上传另一车间的摘要，与本报告合算；失败时原报告保留不变。"""
+        db = get_db()
+        study = service.get_study(db)
+        rep = service.get_report(db, report_id)
+        if rep is None or study is None or rep["study_id"] != study["id"]:
+            abort(404)
+        file = request.files.get("summary")
+        if file is None or not file.filename:
+            flash("请选择另一车间的摘要文件（.json）。", "error")
+            return redirect(url_for("report_detail", report_id=report_id))
+        raw = file.read(1024 * 1024 + 1)
+        if len(raw) > 1024 * 1024:
+            flash("合算未进行：摘要文件过大（＞1MB）。", "error")
+            return redirect(url_for("report_detail", report_id=report_id))
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            flash("合算未进行：摘要无效，不是有效的 JSON 文件。", "error")
+            return redirect(url_for("report_detail", report_id=report_id))
+        try:
+            remote = service.validate_summary(data)
+            combine_id = service.combine_report(db, report_id, remote)
+        except service.ServiceError as e:
+            flash(f"合算未进行：{e}", "error")
+            return redirect(url_for("report_detail", report_id=report_id))
+        except sqlite3.Error:
+            flash("合算结果保存失败，原报告未受影响。", "error")
+            return redirect(url_for("report_detail", report_id=report_id))
+        flash("合算完成：已生成合算结果，原报告保留不变。", "ok")
+        return redirect(url_for("combine_detail", combine_id=combine_id))
+
+    @app.route("/combine/<int:combine_id>")
+    def combine_detail(combine_id):
+        db = get_db()
+        study = service.get_study(db)
+        comb = service.get_combine(db, combine_id)
+        if comb is None or study is None or comb["study_id"] != study["id"]:
+            abort(404)
+        res = json.loads(comb["result_json"])
+        return render_template(
+            "combine.html",
+            study=study,
+            combine=comb,
+            report=service.get_report(db, comb["report_id"]),
+            res=res,
+            parts=json.loads(comb["parts_json"]),
+            components=_components(res),
         )
 
     @app.route("/history")

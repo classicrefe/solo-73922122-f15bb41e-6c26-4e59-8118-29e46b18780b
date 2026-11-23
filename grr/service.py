@@ -1,16 +1,22 @@
-"""业务逻辑：登记试验、读数录入、换件、报告生成。
+"""业务逻辑：登记试验、读数录入、换件、报告生成、两地合算。
 
 所有写操作在单个 BEGIN IMMEDIATE 事务内完成：样件、读数、现行报告
 始终对应同一已提交状态；任一步失败即回滚，原有进度保留。
 """
+import json
 import math
 
-from .anova import two_way_anova
+from .anova import two_way_anova, two_way_anova_agg
 
 MIN_INSPECTORS, MAX_INSPECTORS = 2, 4
 MIN_PARTS, MAX_PARTS = 3, 8
 TRIALS = (1, 2)
 TOL = 1e-9  # “原值重报”判定容差
+
+# 两地合算：摘要格式标识与版本、参与合算的最少共用样件数
+SUMMARY_FORMAT = "grr-summary"
+SUMMARY_VERSION = 1
+MIN_SHARED_PARTS = 3
 
 
 class ServiceError(ValueError):
@@ -330,3 +336,195 @@ def ensure_current_report(conn, study_id):
         conn.rollback()
         raise
     return get_report(conn, rid), True
+
+
+# ---------- 两地合算 ----------
+
+def build_summary(conn, report_id):
+    """由报告生成统计摘要：只含样件位置、编号与每格（样件×检验员槽位）的
+    次数/和/平方和；不含检验员姓名、逐人统计与逐次读数。"""
+    rep = get_report(conn, report_id)
+    if rep is None:
+        raise ServiceError("报告不存在。")
+    study = conn.execute(
+        "SELECT * FROM study WHERE id=?", (rep["study_id"],)
+    ).fetchone()
+    rows = conn.execute(
+        """SELECT p.position, p.part_no, r.inspector_id, r.value
+           FROM report_part rp
+           JOIN part p    ON p.id = rp.part_id
+           JOIN reading r ON r.part_id = p.id
+           WHERE rp.report_id=?
+           ORDER BY p.position, r.inspector_id, r.trial""",
+        (report_id,),
+    ).fetchall()
+    insp_ids = sorted({r["inspector_id"] for r in rows})
+    if len(insp_ids) != rep["n_inspectors"]:
+        raise ServiceError("报告读数与检验员人数不符，无法导出摘要。")
+    slot = {iid: k + 1 for k, iid in enumerate(insp_ids)}  # 匿名槽位，不含姓名
+    parts = {}
+    for r in rows:
+        cells = parts.setdefault((r["position"], r["part_no"]), {})
+        s = slot[r["inspector_id"]]
+        n, total, sq = cells.get(s, (0, 0.0, 0.0))
+        cells[s] = (n + 1, total + r["value"], sq + r["value"] * r["value"])
+    out_parts = [
+        {
+            "position": position,
+            "part_no": part_no,
+            "cells": [
+                {"slot": s, "n": n, "sum": total, "sumsq": sq}
+                for s, (n, total, sq) in sorted(cells.items())
+            ],
+        }
+        for (position, part_no), cells in sorted(parts.items())
+    ]
+    return {
+        "format": SUMMARY_FORMAT,
+        "version": SUMMARY_VERSION,
+        "study": study["name"] if study else "",
+        "report_id": rep["id"],
+        "report_created_at": rep["created_at"],
+        "n_trials": rep["n_trials"],
+        "n_inspectors": rep["n_inspectors"],
+        "parts": out_parts,
+    }
+
+
+def _is_num(x):
+    return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
+
+
+def validate_summary(data):
+    """校验另一车间上传的摘要并规范化；任何问题都抛 ServiceError 说明原因。"""
+    if not isinstance(data, dict):
+        raise ServiceError("摘要不是有效的 JSON 对象。")
+    if data.get("format") != SUMMARY_FORMAT:
+        raise ServiceError(f"摘要格式标识不符（须为 {SUMMARY_FORMAT}）。")
+    if data.get("version") != SUMMARY_VERSION:
+        raise ServiceError(f"摘要版本不支持（须为 {SUMMARY_VERSION}）。")
+    if data.get("n_trials") != len(TRIALS):
+        raise ServiceError(f"摘要测次数须为 {len(TRIALS)}。")
+    n_insp = data.get("n_inspectors")
+    if type(n_insp) is not int or not MIN_INSPECTORS <= n_insp <= MAX_INSPECTORS:
+        raise ServiceError(f"摘要检验员人数须为 {MIN_INSPECTORS}～{MAX_INSPECTORS} 的整数。")
+    parts = data.get("parts")
+    if not isinstance(parts, list) or not parts:
+        raise ServiceError("摘要缺少样件数据。")
+    out_parts, seen_pos = [], set()
+    for p in parts:
+        if not isinstance(p, dict):
+            raise ServiceError("摘要样件条目无效。")
+        pos, pno = p.get("position"), p.get("part_no")
+        if type(pos) is not int or pos < 1:
+            raise ServiceError("摘要样件位置无效。")
+        if not isinstance(pno, str) or not pno.strip() or len(pno.strip()) > 80:
+            raise ServiceError("摘要样件编号无效。")
+        pno = pno.strip()
+        if pos in seen_pos:
+            raise ServiceError(f"摘要中位置 {pos} 重复出现。")
+        seen_pos.add(pos)
+        cells = p.get("cells")
+        if not isinstance(cells, list) or len(cells) != n_insp:
+            raise ServiceError(f"位置 {pos} 的汇总格数与检验员人数不符。")
+        out_cells, seen_slots = [], set()
+        for c in cells:
+            if not isinstance(c, dict):
+                raise ServiceError("摘要汇总格无效。")
+            s = c.get("slot")
+            if type(s) is not int or not 1 <= s <= n_insp or s in seen_slots:
+                raise ServiceError(f"位置 {pos} 的检验员槽位无效或重复。")
+            seen_slots.add(s)
+            if c.get("n") != len(TRIALS):
+                raise ServiceError(f"位置 {pos} 的汇总次数与测次数不符。")
+            total, sq = c.get("sum"), c.get("sumsq")
+            if not _is_num(total) or not _is_num(sq):
+                raise ServiceError(f"位置 {pos} 的汇总量不是有效数值。")
+            total, sq = float(total), float(sq)
+            if sq < total * total / len(TRIALS) - 1e-6 * max(1.0, total * total):
+                raise ServiceError(f"位置 {pos} 的平方和与和不匹配，摘要无效。")
+            out_cells.append({"slot": s, "n": len(TRIALS), "sum": total, "sumsq": sq})
+        out_parts.append(
+            {"position": pos, "part_no": pno,
+             "cells": sorted(out_cells, key=lambda c: c["slot"])}
+        )
+    name = data.get("study")
+    label = name.strip()[:80] if isinstance(name, str) and name.strip() else "另一车间"
+    if isinstance(data.get("report_id"), int):
+        label = f"{label}·报告#{data['report_id']}"
+    return {
+        "n_trials": len(TRIALS),
+        "n_inspectors": n_insp,
+        "parts": sorted(out_parts, key=lambda p: p["position"]),
+        "label": label,
+        "report_id": data.get("report_id"),
+        "report_created_at": data.get("report_created_at"),
+    }
+
+
+def combine_report(conn, report_id, remote):
+    """本方报告与另一车间摘要合算：只纳入位置与编号都相同的样件，
+    两地检验员分别计数。成功时写入 combine 记录（单事务），原报告不动。
+    共用样件不足三件时抛 ServiceError，不写入任何数据。返回合算记录 id。"""
+    rep = get_report(conn, report_id)
+    if rep is None:
+        raise ServiceError("报告不存在。")
+    local = build_summary(conn, report_id)
+    if (remote["n_inspectors"] == local["n_inspectors"]
+            and remote["parts"] == local["parts"]):
+        raise ServiceError("该摘要与本报告内容完全相同（疑为本报告导出），请上传另一车间的摘要。")
+    local_map = {(p["position"], p["part_no"]): p for p in local["parts"]}
+    shared = [
+        (lp, rp)
+        for rp in remote["parts"]
+        if (lp := local_map.get((rp["position"], rp["part_no"]))) is not None
+    ]
+    shared.sort(key=lambda pair: pair[0]["position"])
+    if len(shared) < MIN_SHARED_PARTS:
+        raise ServiceError(
+            f"位置与编号都相同的样件仅 {len(shared)} 件，"
+            f"不足 {MIN_SHARED_PARTS} 件，无法合算。"
+        )
+    b_local, b_peer = local["n_inspectors"], remote["n_inspectors"]
+    aggs = {}
+    for k, (lp, rp) in enumerate(shared):
+        for c in lp["cells"]:
+            aggs[(k, c["slot"] - 1)] = (c["n"], c["sum"], c["sumsq"])
+        for c in rp["cells"]:
+            aggs[(k, b_local + c["slot"] - 1)] = (c["n"], c["sum"], c["sumsq"])
+    res = two_way_anova_agg(aggs, len(shared), b_local + b_peer, local["n_trials"])
+    parts_json = json.dumps(
+        [{"position": lp["position"], "part_no": lp["part_no"]} for lp, _ in shared],
+        ensure_ascii=False,
+    )
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        cid = conn.execute(
+            """INSERT INTO combine
+               (report_id, peer_label, n_parts, n_insp_local, n_insp_peer,
+                n_trials, result_json, parts_json)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (
+                rep["id"], remote["label"], len(shared), b_local, b_peer,
+                local["n_trials"], json.dumps(res), parts_json,
+            ),
+        ).lastrowid
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return cid
+
+
+def get_combine(conn, combine_id):
+    return conn.execute(
+        """SELECT c.*, r.study_id AS study_id FROM combine c
+           JOIN report r ON r.id = c.report_id WHERE c.id=?""",
+        (combine_id,),
+    ).fetchone()
+
+
+def list_combines(conn, report_id):
+    return conn.execute(
+        "SELECT * FROM combine WHERE report_id=? ORDER BY id DESC", (report_id,)
+    ).fetchall()

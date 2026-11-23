@@ -5,21 +5,34 @@
   交互(样件×检验员) var_int  = max(0, (MS_interaction - MS_error) / n)
   检验员            var_insp = max(0, (MS_inspector - MS_interaction) / (a*n))
   样件              var_part = max(0, (MS_part - MS_interaction) / (b*n))
+
+two_way_anova 接收逐次读数；two_way_anova_agg 接收每格汇总量（次数、和、平方和）。
+两条路径共用同一套计算公式，因此“把明细放在一起算”与“用统计摘要合算”结果一致。
 """
 
 
 def two_way_anova(cells, n_parts, n_inspectors, n_trials=2):
     """cells: {(part_idx, inspector_idx): [读数, ...]}，必须齐全（每格 n_trials 个）。"""
+    aggs = {}
+    for key, vals in cells.items():
+        if not vals or len(vals) != n_trials:
+            raise ValueError("读数未齐全，不能做方差分析")
+        aggs[key] = (len(vals), sum(vals), sum(v * v for v in vals))
+    return two_way_anova_agg(aggs, n_parts, n_inspectors, n_trials)
+
+
+def two_way_anova_agg(aggs, n_parts, n_inspectors, n_trials=2):
+    """aggs: {(part_idx, inspector_idx): (次数, 和, 平方和)}，每格次数须等于 n_trials。"""
     a, b, n = n_parts, n_inspectors, n_trials
     if a < 2 or b < 2 or n < 2:
         raise ValueError("样件、检验员、测次均须不少于 2")
     for i in range(a):
         for j in range(b):
-            vals = cells.get((i, j))
-            if not vals or len(vals) != n:
+            agg = aggs.get((i, j))
+            if agg is None or agg[0] != n:
                 raise ValueError("读数未齐全，不能做方差分析")
 
-    cell_mean = {(i, j): sum(cells[(i, j)]) / n for i in range(a) for j in range(b)}
+    cell_mean = {(i, j): aggs[(i, j)][1] / n for i in range(a) for j in range(b)}
     part_mean = [sum(cell_mean[(i, j)] for j in range(b)) / b for i in range(a)]
     insp_mean = [sum(cell_mean[(i, j)] for i in range(a)) / a for j in range(b)]
     grand = sum(part_mean) / a
@@ -32,12 +45,9 @@ def two_way_anova(cells, n_parts, n_inspectors, n_trials=2):
     ss_int = ss_cells - ss_part - ss_insp
     if ss_int < 0 and ss_int > -1e-9:  # 浮点尾差
         ss_int = 0.0
-    ss_err = sum(
-        (v - cell_mean[(i, j)]) ** 2
-        for (i, j), vals in cells.items()
-        for v in vals
-    )
-    ss_tot = sum((v - grand) ** 2 for vals in cells.values() for v in vals)
+    # 每格离差平方和 = 平方和 − 和²/次数
+    ss_err = sum(agg[2] - agg[1] * agg[1] / n for agg in aggs.values())
+    ss_tot = sum(agg[2] for agg in aggs.values()) - a * b * n * grand * grand
 
     df_part, df_insp = a - 1, b - 1
     df_int = (a - 1) * (b - 1)

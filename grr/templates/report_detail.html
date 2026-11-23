@@ -6,5 +6,35 @@
   {% else %}<span class="badge history">历史</span>{% endif %}
 </h2>
 {% include "_report_body.html" %}
+
+<h3>两地合算</h3>
+<p>同一把量具在另一车间的试验可与本报告合算：只纳入<strong>位置与编号都相同</strong>的样件，
+   两地检验员分别计数。摘要只含样件位置、编号与所需汇总量，
+   不含检验员姓名、逐人统计与逐次读数。</p>
+<p><a class="button" href="{{ url_for('report_summary', report_id=report.id) }}">下载本报告统计摘要（JSON）</a></p>
+<form method="post" action="{{ url_for('combine_report', report_id=report.id) }}"
+      enctype="multipart/form-data" class="card">
+  上传另一车间摘要 <input type="file" name="summary" accept=".json,application/json" required>
+  <button type="submit">合算</button>
+  <span class="hint">共用样件不足 {{ min_shared }} 件或摘要无效时会说明原因，本报告保留不变。</span>
+</form>
+
+{% if combines %}
+<h4>本报告的合算记录</h4>
+<table>
+  <tr><th>#</th><th>时间</th><th>对方摘要</th><th>参与样件</th><th>检验员（本+对方）</th><th></th></tr>
+  {% for c in combines %}
+  <tr>
+    <td>{{ c.id }}</td>
+    <td>{{ c.created_at }}</td>
+    <td>{{ c.peer_label }}</td>
+    <td>{{ c.n_parts }} 件</td>
+    <td>{{ c.n_insp_local }}+{{ c.n_insp_peer }} 名</td>
+    <td><a href="{{ url_for('combine_detail', combine_id=c.id) }}">查看</a></td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+
 <p><a href="{{ url_for('history') }}">返回历史报告列表</a></p>
 {% endblock %}

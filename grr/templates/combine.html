@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}合算结果 #{{ combine.id }}{% endblock %}
+{% block content %}
+<h2>两地合算结果 #{{ combine.id }}</h2>
+<p>基于本方报告 <a href="{{ url_for('report_detail', report_id=report.id) }}">#{{ report.id }}</a>
+  {% if report.state == 'current' %}<span class="badge current">现行</span>
+  {% else %}<span class="badge history">历史</span>{% endif %}
+  与对方摘要「{{ combine.peer_label }}」 ｜ 生成于 {{ combine.created_at }}</p>
+<p>{{ combine.n_parts }} 件共用样件 ×
+   {{ combine.n_insp_local }}+{{ combine.n_insp_peer }} 名检验员（两地分别计数）×
+   {{ combine.n_trials }} 次重复</p>
+
+<h3>参与合算的样件（位置与编号均相同）</h3>
+<table>
+  <tr><th>位置</th><th>样件编号</th></tr>
+  {% for p in parts %}
+  <tr><td>{{ p.position }}</td><td>{{ p.part_no }}</td></tr>
+  {% endfor %}
+</table>
+
+<h3>带交互项的双因素方差分析（合算）</h3>
+<table>
+  <tr><th>变差来源</th><th>平方和 SS</th><th>自由度 df</th><th>均方 MS</th></tr>
+  <tr><td>样件</td><td>{{ '%.6f'|format(res.ss_part) }}</td><td>{{ res.df_part }}</td><td>{{ '%.6f'|format(res.ms_part) }}</td></tr>
+  <tr><td>检验员</td><td>{{ '%.6f'|format(res.ss_inspector) }}</td><td>{{ res.df_inspector }}</td><td>{{ '%.6f'|format(res.ms_inspector) }}</td></tr>
+  <tr><td>样件×检验员交互</td><td>{{ '%.6f'|format(res.ss_interaction) }}</td><td>{{ res.df_interaction }}</td><td>{{ '%.6f'|format(res.ms_interaction) }}</td></tr>
+  <tr><td>重复测量（误差）</td><td>{{ '%.6f'|format(res.ss_error) }}</td><td>{{ res.df_error }}</td><td>{{ '%.6f'|format(res.ms_error) }}</td></tr>
+  <tr><td>合计</td><td>{{ '%.6f'|format(res.ss_total) }}</td><td>{{ res.df_total }}</td><td>—</td></tr>
+</table>
+
+<h3>方差分量（负分量按零计）</h3>
+<table>
+  <tr><th>分量</th><th>方差分量</th><th>标准差</th><th>占比</th></tr>
+  {% for c in components %}
+  <tr>
+    <td>{{ c.name }}</td>
+    <td>{{ '%.6f'|format(c.var) }}</td>
+    <td>{{ '%.6f'|format(c.std) }}</td>
+    <td>{{ '%.2f'|format(c.pct) }}%</td>
+  </tr>
+  {% endfor %}
+</table>
+
+<p class="hint">合算只使用两份摘要中的汇总量，数值与把两地对应明细放在一起做方差分析一致；
+   本方报告与对方摘要均保留不变。</p>
+<p><a href="{{ url_for('report_detail', report_id=report.id) }}">返回报告 #{{ report.id }}</a> ·
+   <a href="{{ url_for('history') }}">历史报告列表</a></p>
+{% endblock %}
